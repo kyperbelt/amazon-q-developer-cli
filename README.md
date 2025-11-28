@@ -1,5 +1,8 @@
 # Amazon Q CLI
 
+:> [!WARNING]
+> now that kiro cli has killed q cli, I thought it would be cool to take this and have it use pay as you go bedrock models.
+
 ## Installation
 
 - **macOS**:
