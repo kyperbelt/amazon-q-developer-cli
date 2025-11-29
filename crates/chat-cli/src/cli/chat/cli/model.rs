@@ -35,6 +35,9 @@ pub struct ModelInfo {
     /// Size of the model's context window, in tokens
     #[serde(default = "default_context_window")]
     pub context_window_tokens: usize,
+    /// Whether the model supports tool use
+    #[serde(default)]
+    pub supports_tools: bool,
 }
 
 impl ModelInfo {
@@ -48,6 +51,7 @@ impl ModelInfo {
             description: model.description.clone(),
             model_name: model.model_name().map(|s| s.to_string()),
             context_window_tokens,
+            supports_tools: false,
         }
     }
 
@@ -58,6 +62,7 @@ impl ModelInfo {
             description: None,
             model_name: None,
             context_window_tokens: 200_000,
+            supports_tools: false,
         }
     }
 
@@ -194,36 +199,42 @@ fn get_builtin_models() -> Vec<ModelInfo> {
             model_name: Some("ChatGPT 120B".to_string()),
             description: Some("OpenAI GPT 120B model".to_string()),
             context_window_tokens: 128_000,
+            supports_tools: true,
         },
         ModelInfo {
             model_id: "openai.gpt-oss-20b-1:0".to_string(),
             model_name: Some("ChatGPT 20B".to_string()),
             description: Some("OpenAI GPT 20B model".to_string()),
             context_window_tokens: 128_000,
+            supports_tools: true,
         },
         ModelInfo {
             model_id: "us.anthropic.claude-haiku-4-5-20251001-v1:0".to_string(),
             model_name: Some("Claude Haiku 4.5".to_string()),
             description: Some("Anthropic Claude Haiku 4.5".to_string()),
             context_window_tokens: 200_000,
+            supports_tools: true,
         },
         ModelInfo {
             model_id: "qwen.qwen3-coder-480b-a35b-v1:0".to_string(),
             model_name: Some("Qwen3 Coder 480B".to_string()),
             description: Some("Qwen3 Coder 480B model".to_string()),
             context_window_tokens: 130_000,
+            supports_tools: false,
         },
         ModelInfo {
             model_id: "meta.llama4-maverick-17b-instruct-v1:0".to_string(),
             model_name: Some("Llama 4 Maverick 17B".to_string()),
             description: Some("Meta Llama 4 Maverick 17B".to_string()),
             context_window_tokens: 1_000_000,
+            supports_tools: false,
         },
         ModelInfo {
             model_id: "deepseek.v3-v1:0".to_string(),
             model_name: Some("DeepSeek V3".to_string()),
             description: Some("DeepSeek V3 model".to_string()),
             context_window_tokens: 163_000,
+            supports_tools: false,
         },
     ]
 }
@@ -240,6 +251,15 @@ pub fn validate_model_id(model_id: &str) -> eyre::Result<()> {
     } else {
         eyre::bail!("This model is not supported in this deployment.")
     }
+}
+
+/// Checks if a model supports tool use
+pub fn model_supports_tools(model_id: &str) -> bool {
+    get_builtin_models()
+        .iter()
+        .find(|m| m.model_id == model_id)
+        .map(|m| m.supports_tools)
+        .unwrap_or(false)
 }
 
 pub fn normalize_model_name(name: &str) -> &str {

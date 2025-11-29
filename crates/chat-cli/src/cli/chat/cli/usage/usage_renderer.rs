@@ -190,3 +190,94 @@ pub async fn render_context_window(
 
     Ok(())
 }
+
+/// Render token billing information
+pub async fn render_token_billing(
+    session: &mut ChatSession,
+) -> Result<(), ChatError> {
+    let total_usage = &session.conversation.total_token_usage;
+    let by_model = &session.conversation.token_usage_by_model;
+
+    if total_usage.total() == 0 && by_model.is_empty() {
+        queue!(
+            session.stderr,
+            StyledText::secondary_fg(),
+            style::Print("\nNo token usage recorded yet.\n\n"),
+            StyledText::reset(),
+        )?;
+        return Ok(());
+    }
+
+    queue!(
+        session.stderr,
+        style::SetAttribute(Attribute::Bold),
+        style::Print("\n📊 Token Usage (Billing)\n\n"),
+        StyledText::reset_attributes(),
+    )?;
+
+    // Per-model breakdown
+    if !by_model.is_empty() {
+        queue!(
+            session.stderr,
+            style::SetAttribute(Attribute::Bold),
+            style::Print("Per Model:\n"),
+            StyledText::reset_attributes(),
+        )?;
+
+        for (model_id, usage) in by_model {
+            let model_name = model_id.split('/').last().unwrap_or(model_id);
+            queue!(
+                session.stderr,
+                StyledText::info_fg(),
+                style::Print(format!("  {}\n", model_name)),
+                StyledText::reset(),
+                style::Print(format!("    Input:  {} tokens\n", usage.input_tokens)),
+                style::Print(format!("    Output: {} tokens\n", usage.output_tokens)),
+            )?;
+
+            if usage.cache_read_tokens > 0 || usage.cache_write_tokens > 0 {
+                queue!(
+                    session.stderr,
+                    style::Print(format!("    Cache read:  {} tokens\n", usage.cache_read_tokens)),
+                    style::Print(format!("    Cache write: {} tokens\n", usage.cache_write_tokens)),
+                )?;
+            }
+
+            queue!(
+                session.stderr,
+                style::SetAttribute(Attribute::Bold),
+                style::Print(format!("    Total:  {} tokens\n\n", usage.total())),
+                StyledText::reset_attributes(),
+            )?;
+        }
+    }
+
+    // Total across all models
+    queue!(
+        session.stderr,
+        style::SetAttribute(Attribute::Bold),
+        style::Print("Total (All Models):\n"),
+        StyledText::reset_attributes(),
+        StyledText::success_fg(),
+        style::Print(format!("  Input:  {} tokens\n", total_usage.input_tokens)),
+        style::Print(format!("  Output: {} tokens\n", total_usage.output_tokens)),
+    )?;
+
+    if total_usage.cache_read_tokens > 0 || total_usage.cache_write_tokens > 0 {
+        queue!(
+            session.stderr,
+            style::Print(format!("  Cache read:  {} tokens\n", total_usage.cache_read_tokens)),
+            style::Print(format!("  Cache write: {} tokens\n", total_usage.cache_write_tokens)),
+        )?;
+    }
+
+    queue!(
+        session.stderr,
+        style::SetAttribute(Attribute::Bold),
+        style::Print(format!("  Total:  {} tokens\n\n", total_usage.total())),
+        StyledText::reset_attributes(),
+        StyledText::reset(),
+    )?;
+
+    Ok(())
+}

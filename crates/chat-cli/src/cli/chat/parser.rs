@@ -640,6 +640,23 @@ impl ResponseParser {
     }
 
     fn make_metadata(&self, chat_conversation_type: Option<ChatConversationType>) -> RequestMetadata {
+        // Extract token usage from Bedrock metadata if available
+        let (input_tokens, output_tokens, cache_read_tokens, cache_write_tokens) = 
+            if let Some(metadata) = self.response.get_bedrock_metadata() {
+                if let Some(usage) = &metadata.usage {
+                    (
+                        Some(usage.input_tokens()),
+                        Some(usage.output_tokens()),
+                        usage.cache_read_input_tokens(),
+                        usage.cache_write_input_tokens(),
+                    )
+                } else {
+                    (None, None, None, None)
+                }
+            } else {
+                (None, None, None, None)
+            };
+
         RequestMetadata {
             request_id: self.response.request_id().map(String::from),
             message_id: self.message_id.clone(),
@@ -659,6 +676,10 @@ impl ResponseParser {
                 .map(|t| (t.id.clone(), t.name.clone()))
                 .collect::<_>(),
             model_id: self.model_id.clone(),
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
         }
     }
 }
@@ -710,6 +731,11 @@ pub struct RequestMetadata {
     pub model_id: Option<String>,
     /// Meta tags for the request.
     pub message_meta_tags: Vec<MessageMetaTag>,
+    /// Token usage from Bedrock (if available)
+    pub input_tokens: Option<i32>,
+    pub output_tokens: Option<i32>,
+    pub cache_read_tokens: Option<i32>,
+    pub cache_write_tokens: Option<i32>,
 }
 
 fn system_time_to_unix_ms(time: SystemTime) -> u64 {

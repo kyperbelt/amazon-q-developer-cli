@@ -279,6 +279,7 @@ impl RtsModel {
             conversation_id: Some(self.conversation_id.to_string()),
             user_input_message,
             history: Some(history),
+            service_tier: None,
         })
     }
 }

@@ -36,6 +36,7 @@ impl UsageArgs {
     pub async fn execute(self, os: &Os, session: &mut ChatSession) -> Result<ChatState, ChatError> {
         let usage_data = usage_data_provider::get_detailed_usage_data(session, os).await?;
         usage_renderer::render_context_window(&usage_data, session).await?;
+        usage_renderer::render_token_billing(session).await?;
         Ok(ChatState::PromptUser {
             skip_printing_tools: true,
         })

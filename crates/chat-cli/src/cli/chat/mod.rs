@@ -236,6 +236,9 @@ pub struct ChatArgs {
     /// Current model to use
     #[arg(long = "model")]
     pub model: Option<String>,
+    /// Service tier: flex or standard (default: flex)
+    #[arg(long = "service-tier", value_name = "TIER")]
+    pub service_tier: Option<String>,
     /// Allows the model to use any tool to run commands without asking for confirmation.
     #[arg(short = 'a', long)]
     pub trust_all_tools: bool,
@@ -437,7 +440,9 @@ impl ChatArgs {
             .await?;
         let tool_config = tool_manager.load_tools(os, &mut stderr).await?;
 
-        ChatSession::new(
+        let service_tier = self.service_tier.clone();
+
+        let mut session = ChatSession::new(
             os,
             &conversation_id,
             agents,
@@ -452,9 +457,14 @@ impl ChatArgs {
             mcp_enabled,
             self.wrap,
         )
-        .await?
-        .spawn(os)
-        .await
+        .await?;
+
+        // Set service tier from CLI args if provided
+        if let Some(tier) = service_tier {
+            session.conversation.service_tier = tier;
+        }
+
+        session.spawn(os).await
         .map(|_| ExitCode::SUCCESS)
     }
 }
@@ -2886,6 +2896,19 @@ impl ChatSession {
                                 error!(?request_id, ?message, "Encountered an unexpected model response");
                             }
                             self.conversation.push_assistant_message(os, message, Some(rm.clone()));
+                            
+                            // Record token usage if available
+                            if let (Some(model_id), Some(input), Some(output)) = 
+                                (&rm.model_id, rm.input_tokens, rm.output_tokens) {
+                                self.conversation.record_token_usage(
+                                    model_id,
+                                    input,
+                                    output,
+                                    rm.cache_read_tokens.unwrap_or(0),
+                                    rm.cache_write_tokens.unwrap_or(0),
+                                );
+                            }
+                            
                             self.user_turn_request_metadata.push(rm);
                             ended = true;
                         },

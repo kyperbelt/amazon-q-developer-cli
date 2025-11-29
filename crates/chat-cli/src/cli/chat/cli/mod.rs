@@ -18,6 +18,7 @@ pub mod prompts;
 pub mod reply;
 pub mod subscribe;
 pub mod tangent;
+pub mod tier;
 pub mod todos;
 pub mod tools;
 pub mod usage;
@@ -40,6 +41,7 @@ use profile::AgentSubcommand;
 use prompts::PromptsArgs;
 use reply::ReplyArgs;
 use tangent::TangentArgs;
+use tier::TierArgs;
 use todos::TodoSubcommand;
 use tools::ToolsArgs;
 
@@ -103,6 +105,8 @@ pub enum SlashCommand {
     Mcp(McpArgs),
     /// Select a model for the current conversation session
     Model(ModelArgs),
+    /// Select service tier (flex or standard)
+    Tier(TierArgs),
     /// Toggle experimental features
     Experiment(ExperimentArgs),
     /// Upgrade to a Q Developer Pro subscription for increased query limits
@@ -180,6 +184,7 @@ impl SlashCommand {
             Self::Usage(args) => args.execute(os, session).await,
             Self::Mcp(args) => args.execute(session).await,
             Self::Model(args) => args.execute(os, session).await,
+            Self::Tier(args) => args.execute(session).await,
             Self::Experiment(args) => args.execute(os, session).await,
             Self::Subscribe(args) => args.execute(os, session).await,
             Self::Tangent(args) => args.execute(os, session).await,
@@ -219,6 +224,7 @@ impl SlashCommand {
             Self::Usage(_) => "usage",
             Self::Mcp(_) => "mcp",
             Self::Model(_) => "model",
+            Self::Tier(_) => "tier",
             Self::Experiment(_) => "experiment",
             Self::Subscribe(_) => "subscribe",
             Self::Tangent(_) => "tangent",

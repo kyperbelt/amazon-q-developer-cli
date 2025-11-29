@@ -97,6 +97,7 @@ pub struct ConversationState {
     pub conversation_id: Option<String>,
     pub user_input_message: UserInputMessage,
     pub history: Option<Vec<ChatMessage>>,
+    pub service_tier: Option<String>,
 }
 
 #[derive(Debug, Clone)]

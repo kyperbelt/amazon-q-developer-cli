@@ -88,6 +88,31 @@ use crate::theme::StyledText;
 pub const CONTEXT_ENTRY_START_HEADER: &str = "--- CONTEXT ENTRY BEGIN ---\n";
 pub const CONTEXT_ENTRY_END_HEADER: &str = "--- CONTEXT ENTRY END ---\n\n";
 
+fn default_service_tier() -> String {
+    "flex".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TokenUsage {
+    pub input_tokens: i32,
+    pub output_tokens: i32,
+    pub cache_read_tokens: i32,
+    pub cache_write_tokens: i32,
+}
+
+impl TokenUsage {
+    pub fn add(&mut self, input: i32, output: i32, cache_read: i32, cache_write: i32) {
+        self.input_tokens += input;
+        self.output_tokens += output;
+        self.cache_read_tokens += cache_read;
+        self.cache_write_tokens += cache_write;
+    }
+
+    pub fn total(&self) -> i32 {
+        self.input_tokens + self.output_tokens
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
     user: UserMessage,
@@ -149,6 +174,15 @@ pub struct ConversationState {
     /// Tangent mode checkpoint - stores main conversation when in tangent mode
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tangent_state: Option<ConversationCheckpoint>,
+    /// Token usage tracking per model
+    #[serde(default)]
+    pub token_usage_by_model: HashMap<String, TokenUsage>,
+    /// Total token usage across all models
+    #[serde(default)]
+    pub total_token_usage: TokenUsage,
+    /// Service tier for Bedrock API (flex or standard)
+    #[serde(default = "default_service_tier")]
+    pub service_tier: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,11 +246,25 @@ impl ConversationState {
             checkpoint_manager: None,
             mcp_enabled,
             tangent_state: None,
+            token_usage_by_model: HashMap::new(),
+            total_token_usage: TokenUsage::default(),
+            service_tier: default_service_tier(),
         }
     }
 
     pub fn latest_summary(&self) -> Option<&str> {
         self.latest_summary.as_ref().map(|(s, _)| s.as_str())
+    }
+
+    pub fn record_token_usage(&mut self, model_id: &str, input: i32, output: i32, cache_read: i32, cache_write: i32) {
+        // Update per-model usage
+        self.token_usage_by_model
+            .entry(model_id.to_string())
+            .or_insert_with(TokenUsage::default)
+            .add(input, output, cache_read, cache_write);
+        
+        // Update total usage
+        self.total_token_usage.add(input, output, cache_read, cache_write);
     }
 
     pub fn history(&self) -> &VecDeque<HistoryEntry> {
@@ -619,6 +667,7 @@ impl ConversationState {
             dropped_context_files,
             tools: &self.tools,
             model_id: self.model_info.as_ref().map(|m| m.model_id.as_str()),
+            service_tier: &self.service_tier,
         })
     }
 
@@ -724,6 +773,7 @@ impl ConversationState {
                 .unwrap_or(UserMessage::new_prompt(summary_content, None)) // should not happen
                 .into_user_input_message(self.model_info.as_ref().map(|m| m.model_id.clone()), &tools),
             history: Some(flatten_history(history.iter())),
+            service_tier: Some(self.service_tier.clone()),
         })
     }
 
@@ -782,6 +832,7 @@ Return only the JSON configuration, no additional text.",
             conversation_id: Some(self.conversation_id.clone()),
             user_input_message: generation_message.into_user_input_message(self.model.clone(), &tools),
             history: Some(flatten_history(history.iter())),
+            service_tier: Some(self.service_tier.clone()),
         })
     }
 
@@ -997,6 +1048,7 @@ pub struct BackendConversationStateImpl<'a, T, U> {
     pub dropped_context_files: Vec<(String, String)>,
     pub tools: &'a HashMap<ToolOrigin, Vec<Tool>>,
     pub model_id: Option<&'a str>,
+    pub service_tier: &'a str,
 }
 
 impl BackendConversationStateImpl<'_, std::collections::vec_deque::Iter<'_, HistoryEntry>, Option<Vec<HistoryEntry>>> {
@@ -1012,6 +1064,7 @@ impl BackendConversationStateImpl<'_, std::collections::vec_deque::Iter<'_, Hist
             conversation_id: Some(self.conversation_id.to_string()),
             user_input_message,
             history: Some(history),
+            service_tier: Some(self.service_tier.to_string()),
         })
     }
 

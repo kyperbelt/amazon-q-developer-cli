@@ -271,6 +271,7 @@ impl ApiClient {
             conversation_id,
             user_input_message,
             history,
+            service_tier,
         } = conversation;
 
         let model_id = user_input_message.model_id.clone()
@@ -305,11 +306,13 @@ impl ApiClient {
 
         debug!("Converted {} messages for Bedrock", messages.len());
 
-        // Disable tools - not properly implemented for Bedrock yet
-        // let tools = bedrock::convert_tools_to_bedrock(
-        //     user_input_message.user_input_message_context.as_ref()
-        //         .and_then(|ctx| ctx.tools.as_ref())
-        // );
+        // Check if model supports tools by looking it up in the builtin list
+        let supports_tools = crate::cli::chat::cli::model::model_supports_tools(&model_id);
+
+        let tools = bedrock::convert_tools_to_bedrock(
+            user_input_message.user_input_message_context.as_ref()
+                .and_then(|ctx| ctx.tools.as_ref())
+        );
 
         let system_prompt = bedrock::extract_system_prompt(
             user_input_message.user_input_message_context.as_ref()
@@ -322,19 +325,39 @@ impl ApiClient {
             .model_id(model_id.clone())
             .set_messages(Some(messages));
 
-        // Don't pass tools - not properly implemented yet
-        // if let Some(tool_config) = tools {
-        //     request = request.tool_config(tool_config);
-        // }
+        // Only pass tools if model supports them
+        if supports_tools {
+            if let Some(tool_config) = tools {
+                debug!("Sending {} tools to Bedrock (model supports tools)", tool_config.tools().len());
+                request = request.tool_config(tool_config);
+            }
+        } else {
+            debug!("Model does not support tools, skipping tool config");
+        }
 
         if let Some(system) = system_prompt {
             request = request.set_system(Some(system));
         }
 
+        // Set service tier
+        if let Some(tier) = service_tier {
+            let tier_type = match tier.as_str() {
+                "flex" => aws_sdk_bedrockruntime::types::ServiceTierType::Flex,
+                _ => aws_sdk_bedrockruntime::types::ServiceTierType::Default,
+            };
+            let service_tier = aws_sdk_bedrockruntime::types::ServiceTier::builder()
+                .r#type(tier_type)
+                .build()?;
+            request = request.service_tier(service_tier);
+            debug!("Using service tier: {}", tier);
+        }
+
         match request.send().await {
             Ok(output) => {
                 debug!("Bedrock request successful, returning stream");
-                Ok(SendMessageOutput::Bedrock(output))
+                Ok(SendMessageOutput::Bedrock(
+                    crate::api_client::send_message_output::SendMessageOutputBedrock::new(output)
+                ))
             }
             Err(err) => {
                 debug!("Bedrock request failed: {:?}", err);
