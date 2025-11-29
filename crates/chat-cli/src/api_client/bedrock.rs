@@ -23,6 +23,7 @@ use super::model::{
 pub fn convert_to_bedrock_messages(
     user_input: &UserInputMessage,
     history: Option<&Vec<ChatMessage>>,
+    model_system_prompt: Option<&str>,
 ) -> Result<Vec<Message>> {
     let mut messages = Vec::new();
 
@@ -259,8 +260,34 @@ pub fn convert_tools_to_bedrock(tools: Option<&Vec<Tool>>) -> Option<ToolConfigu
     .flatten()
 }
 
-/// Extract system prompt from context
-pub fn extract_system_prompt(_context: Option<&UserInputMessageContext>) -> Option<Vec<SystemContentBlock>> {
-    // For now, return None - can be enhanced later if needed
-    None
+/// Extract system prompt from model and agent configuration
+pub fn extract_system_prompt(
+    model_system_prompt: Option<&str>,
+    agent_prompt: Option<&str>,
+) -> Option<Vec<SystemContentBlock>> {
+    let mut blocks = Vec::new();
+    
+    // Model system prompt first
+    if let Some(prompt) = model_system_prompt {
+        tracing::debug!("Adding model system prompt: {}", prompt);
+        blocks.push(SystemContentBlock::Text(prompt.to_string()));
+    } else {
+        tracing::debug!("No model system prompt");
+    }
+    
+    // Agent prompt second
+    if let Some(prompt) = agent_prompt {
+        tracing::debug!("Adding agent prompt: {}", prompt);
+        blocks.push(SystemContentBlock::Text(prompt.to_string()));
+    } else {
+        tracing::debug!("No agent prompt");
+    }
+    
+    tracing::debug!("Total system prompt blocks: {}", blocks.len());
+    
+    if blocks.is_empty() {
+        None
+    } else {
+        Some(blocks)
+    }
 }

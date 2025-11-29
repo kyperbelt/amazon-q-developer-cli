@@ -1,6 +1,9 @@
 ## User settings
 xcuserdata/
 
+research_*/
+continue.json
+
 ## gcc Patch
 /*.gcno
 

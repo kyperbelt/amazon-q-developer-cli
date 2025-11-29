@@ -280,6 +280,8 @@ impl RtsModel {
             user_input_message,
             history: Some(history),
             service_tier: None,
+            model_system_prompt: None,
+            agent_prompt: None,
         })
     }
 }

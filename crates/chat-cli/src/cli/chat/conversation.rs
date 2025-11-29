@@ -668,6 +668,8 @@ impl ConversationState {
             tools: &self.tools,
             model_id: self.model_info.as_ref().map(|m| m.model_id.as_str()),
             service_tier: &self.service_tier,
+            model_system_prompt: self.model_info.as_ref().and_then(|m| m.system_prompt.as_deref()),
+            agent_prompt: self.agents.get_active().and_then(|a| a.prompt.as_deref()),
         })
     }
 
@@ -774,6 +776,8 @@ impl ConversationState {
                 .into_user_input_message(self.model_info.as_ref().map(|m| m.model_id.clone()), &tools),
             history: Some(flatten_history(history.iter())),
             service_tier: Some(self.service_tier.clone()),
+            model_system_prompt: self.model_info.as_ref().and_then(|m| m.system_prompt.clone()),
+            agent_prompt: self.agents.get_active().and_then(|a| a.prompt.clone()),
         })
     }
 
@@ -833,6 +837,8 @@ Return only the JSON configuration, no additional text.",
             user_input_message: generation_message.into_user_input_message(self.model.clone(), &tools),
             history: Some(flatten_history(history.iter())),
             service_tier: Some(self.service_tier.clone()),
+            model_system_prompt: self.model_info.as_ref().and_then(|m| m.system_prompt.clone()),
+            agent_prompt: self.agents.get_active().and_then(|a| a.prompt.clone()),
         })
     }
 
@@ -1049,6 +1055,8 @@ pub struct BackendConversationStateImpl<'a, T, U> {
     pub tools: &'a HashMap<ToolOrigin, Vec<Tool>>,
     pub model_id: Option<&'a str>,
     pub service_tier: &'a str,
+    pub model_system_prompt: Option<&'a str>,
+    pub agent_prompt: Option<&'a str>,
 }
 
 impl BackendConversationStateImpl<'_, std::collections::vec_deque::Iter<'_, HistoryEntry>, Option<Vec<HistoryEntry>>> {
@@ -1065,6 +1073,8 @@ impl BackendConversationStateImpl<'_, std::collections::vec_deque::Iter<'_, Hist
             user_input_message,
             history: Some(history),
             service_tier: Some(self.service_tier.to_string()),
+            model_system_prompt: self.model_system_prompt.map(|s| s.to_string()),
+            agent_prompt: self.agent_prompt.map(|s| s.to_string()),
         })
     }
 
@@ -1215,7 +1225,7 @@ fn enforce_conversation_invariants(
     // If the first message contains tool results, then we add the results to the content field
     // instead. This is required to avoid validation errors.
     if let Some(HistoryEntry { user, .. }) = history.front_mut() {
-        if user.has_tool_use_results() {
+        if user.has_tool_use_results() && user.has_only_success_tool_results() {
             user.replace_content_with_tool_use_results();
         }
     }
@@ -1233,7 +1243,11 @@ fn enforce_conversation_invariants(
                 assistant: AssistantMessage::Response { .. },
                 ..
             }) => {
-                next_message.replace_content_with_tool_use_results();
+                // Only strip success results without corresponding ToolUse
+                // Keep error results - they're valid responses to ToolUse
+                if next_message.has_only_success_tool_results() {
+                    next_message.replace_content_with_tool_use_results();
+                }
             },
             _ => (),
         },

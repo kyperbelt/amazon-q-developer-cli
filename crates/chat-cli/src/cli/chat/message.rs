@@ -234,6 +234,16 @@ impl UserMessage {
         }
     }
 
+    pub fn has_only_success_tool_results(&self) -> bool {
+        use crate::api_client::model::ToolResultStatus;
+        match self.content() {
+            UserMessageContent::ToolUseResults { tool_use_results, .. } => {
+                tool_use_results.iter().all(|r| matches!(r.status, ToolResultStatus::Success))
+            }
+            _ => false,
+        }
+    }
+
     pub fn tool_use_results(&self) -> Option<&[ToolUseResult]> {
         match self.content() {
             UserMessageContent::Prompt { .. } => None,

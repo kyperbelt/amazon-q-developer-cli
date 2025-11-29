@@ -272,6 +272,8 @@ impl ApiClient {
             user_input_message,
             history,
             service_tier,
+            model_system_prompt,
+            agent_prompt,
         } = conversation;
 
         let model_id = user_input_message.model_id.clone()
@@ -295,7 +297,11 @@ impl ApiClient {
         }
 
         // Convert to Bedrock format
-        let messages = bedrock::convert_to_bedrock_messages(&user_input_message, history.as_ref())
+        let messages = bedrock::convert_to_bedrock_messages(
+            &user_input_message,
+            history.as_ref(),
+            model_system_prompt.as_deref(),
+        )
             .map_err(|e| {
                 debug!("Failed to convert messages: {}", e);
                 ConverseStreamError::new(
@@ -315,7 +321,8 @@ impl ApiClient {
         );
 
         let system_prompt = bedrock::extract_system_prompt(
-            user_input_message.user_input_message_context.as_ref()
+            model_system_prompt.as_deref(),
+            agent_prompt.as_deref(),
         );
 
         // Call Bedrock Converse Stream API
@@ -333,10 +340,6 @@ impl ApiClient {
             }
         } else {
             debug!("Model does not support tools, skipping tool config");
-        }
-
-        if let Some(system) = system_prompt {
-            request = request.set_system(Some(system));
         }
 
         // Set service tier

@@ -38,6 +38,9 @@ pub struct ModelInfo {
     /// Whether the model supports tool use
     #[serde(default)]
     pub supports_tools: bool,
+    /// System prompt to prepend to all conversations with this model
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
 }
 
 impl ModelInfo {
@@ -52,6 +55,7 @@ impl ModelInfo {
             model_name: model.model_name().map(|s| s.to_string()),
             context_window_tokens,
             supports_tools: false,
+            system_prompt: None,
         }
     }
 
@@ -63,6 +67,7 @@ impl ModelInfo {
             model_name: None,
             context_window_tokens: 200_000,
             supports_tools: false,
+            system_prompt: None,
         }
     }
 
@@ -200,6 +205,7 @@ fn get_builtin_models() -> Vec<ModelInfo> {
             description: Some("OpenAI GPT 120B model".to_string()),
             context_window_tokens: 128_000,
             supports_tools: true,
+            system_prompt: Some("CRITICAL INSTRUCTION: You MUST NOT generate any response text until AFTER you receive tool results. When you call a tool, STOP generating text immediately. Wait for the tool result to come back. Do not describe what you think the tool will return. Do not list files, directories, or any other information before the tool executes. Your response should ONLY contain tool calls until you receive the results.".to_string()),
         },
         ModelInfo {
             model_id: "openai.gpt-oss-20b-1:0".to_string(),
@@ -207,6 +213,7 @@ fn get_builtin_models() -> Vec<ModelInfo> {
             description: Some("OpenAI GPT 20B model".to_string()),
             context_window_tokens: 128_000,
             supports_tools: true,
+            system_prompt: Some("CRITICAL INSTRUCTION: You MUST NOT generate any response text until AFTER you receive tool results. When you call a tool, STOP generating text immediately. Wait for the tool result to come back. Do not describe what you think the tool will return. Do not list files, directories, or any other information before the tool executes. Your response should ONLY contain tool calls until you receive the results.".to_string()),
         },
         ModelInfo {
             model_id: "us.anthropic.claude-haiku-4-5-20251001-v1:0".to_string(),
@@ -214,6 +221,7 @@ fn get_builtin_models() -> Vec<ModelInfo> {
             description: Some("Anthropic Claude Haiku 4.5".to_string()),
             context_window_tokens: 200_000,
             supports_tools: true,
+            system_prompt: None,
         },
         ModelInfo {
             model_id: "qwen.qwen3-coder-480b-a35b-v1:0".to_string(),
@@ -221,6 +229,7 @@ fn get_builtin_models() -> Vec<ModelInfo> {
             description: Some("Qwen3 Coder 480B model".to_string()),
             context_window_tokens: 130_000,
             supports_tools: false,
+            system_prompt: None,
         },
         ModelInfo {
             model_id: "meta.llama4-maverick-17b-instruct-v1:0".to_string(),
@@ -228,6 +237,7 @@ fn get_builtin_models() -> Vec<ModelInfo> {
             description: Some("Meta Llama 4 Maverick 17B".to_string()),
             context_window_tokens: 1_000_000,
             supports_tools: false,
+            system_prompt: None,
         },
         ModelInfo {
             model_id: "deepseek.v3-v1:0".to_string(),
@@ -235,6 +245,7 @@ fn get_builtin_models() -> Vec<ModelInfo> {
             description: Some("DeepSeek V3 model".to_string()),
             context_window_tokens: 163_000,
             supports_tools: false,
+            system_prompt: None,
         },
     ]
 }

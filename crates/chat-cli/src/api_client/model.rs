@@ -98,6 +98,8 @@ pub struct ConversationState {
     pub user_input_message: UserInputMessage,
     pub history: Option<Vec<ChatMessage>>,
     pub service_tier: Option<String>,
+    pub model_system_prompt: Option<String>,
+    pub agent_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone)]
