@@ -167,7 +167,6 @@ use crate::api_client::{
     self,
     ApiClientError,
 };
-use crate::auth::AuthError;
 use crate::auth::builder_id::is_idc_user;
 use crate::cli::TodoListState;
 use crate::cli::agent::Agents;
@@ -555,8 +554,6 @@ pub enum ChatError {
     #[error("{0}")]
     Client(Box<crate::api_client::ApiClientError>),
     #[error("{0}")]
-    Auth(#[from] AuthError),
-    #[error("{0}")]
     SendMessage(Box<parser::SendMessageError>),
     #[error("{0}")]
     ResponseStream(Box<parser::RecvError>),
@@ -586,7 +583,6 @@ impl ChatError {
     fn status_code(&self) -> Option<u16> {
         match self {
             ChatError::Client(e) => e.status_code(),
-            ChatError::Auth(_) => None,
             ChatError::SendMessage(e) => e.status_code(),
             ChatError::ResponseStream(_) => None,
             ChatError::Std(_) => None,
@@ -613,7 +609,6 @@ impl ReasonCode for ChatError {
             ChatError::Custom(_) => "GenericError".to_string(),
             ChatError::Interrupted { .. } => "Interrupted".to_string(),
             ChatError::GetPromptError(_) => "GetPromptError".to_string(),
-            ChatError::Auth(_) => "AuthError".to_string(),
             ChatError::NonInteractiveToolApproval => "NonInteractiveToolApproval".to_string(),
             ChatError::CompactHistoryFailure => "CompactHistoryFailure".to_string(),
             ChatError::AgentSwapError(_) => "AgentSwapError".to_string(),
@@ -918,26 +913,6 @@ impl ChatSession {
         }
 
         let (context, report, display_err_message) = match err {
-            ChatError::Auth(AuthError::NoToken) => {
-                execute!(
-                    self.stderr,
-                    style::SetAttribute(Attribute::Bold),
-                    StyledText::error_fg(),
-                    style::Print("Authentication Error\n"),
-                    StyledText::reset_attributes(),
-                    StyledText::reset(),
-                    style::Print("\nYour login session has expired. Please log in again using:\n\n"),
-                    StyledText::success_fg(),
-                    style::Print("    q login\n\n"),
-                    StyledText::reset(),
-                )?;
-
-                self.conversation
-                    .append_transcript("Authentication expired - please log in again".to_string());
-
-                self.inner = Some(ChatState::Exit);
-                return Ok(());
-            },
             ChatError::Interrupted { tool_uses: ref inter } => {
                 execute!(self.stderr, style::Print("\n\n"))?;
 

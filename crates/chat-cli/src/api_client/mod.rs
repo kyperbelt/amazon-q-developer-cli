@@ -1,3 +1,4 @@
+mod bedrock;
 mod credentials;
 pub mod customization;
 mod delay_interceptor;
@@ -92,16 +93,13 @@ impl From<ModelListResult> for (Vec<Model>, Model) {
     }
 }
 
-type ModelCache = Arc<RwLock<Option<ModelListResult>>>;
-
 #[derive(Clone, Debug)]
 pub struct ApiClient {
+    bedrock_client: aws_sdk_bedrockruntime::Client,
+    // Keep legacy client for telemetry and other non-chat operations
     client: CodewhispererClient,
-    streaming_client: Option<CodewhispererStreamingClient>,
-    sigv4_streaming_client: Option<QDeveloperStreamingClient>,
     mock_client: Option<Arc<Mutex<std::vec::IntoIter<Vec<ChatResponseStream>>>>>,
     profile: Option<AuthProfile>,
-    model_cache: ModelCache,
 }
 
 impl ApiClient {
@@ -109,11 +107,14 @@ impl ApiClient {
         env: &Env,
         fs: &Fs,
         database: &mut Database,
-        // endpoint is only passed here for list_profiles where it needs to be called for each region
         endpoint: Option<Endpoint>,
     ) -> Result<Self, ApiClientError> {
-        let endpoint = endpoint.unwrap_or(Endpoint::configured_value(database));
+        // Load AWS config for Bedrock
+        let aws_config = aws_config::load_from_env().await;
+        let bedrock_client = aws_sdk_bedrockruntime::Client::new(&aws_config);
 
+        // Keep legacy client for telemetry (uses dummy credentials)
+        let endpoint = endpoint.unwrap_or(Endpoint::configured_value(database));
         let credentials = Credentials::new("xxx", "xxx", None, None, "xxx");
         let bearer_sdk_config = aws_config::defaults(behavior_version())
             .region(endpoint.region.clone())
@@ -128,20 +129,18 @@ impl ApiClient {
                 .http_client(crate::aws_common::http_client::client())
                 .interceptor(OptOutInterceptor::new(database))
                 .interceptor(UserAgentOverrideInterceptor::new())
-                .bearer_token_resolver(BearerResolver)
                 .app_name(app_name())
                 .endpoint_url(endpoint.url())
                 .build(),
         );
 
+        // Handle test mocking
         if cfg!(test) && !is_integ_test() {
             let mut this = Self {
+                bedrock_client,
                 client,
-                streaming_client: None,
-                sigv4_streaming_client: None,
                 mock_client: None,
                 profile: None,
-                model_cache: Arc::new(RwLock::new(None)),
             };
 
             if let Some(json) = crate::util::env_var::get_mock_chat_response(env) {
@@ -151,76 +150,11 @@ impl ApiClient {
             return Ok(this);
         }
 
-        // If SIGV4_AUTH_ENABLED is true, use Q developer client
-        let mut streaming_client = None;
-        let mut sigv4_streaming_client = None;
-        match crate::util::env_var::is_sigv4_enabled(env) {
-            true => {
-                let credentials_chain = CredentialsChain::new().await;
-                if let Err(err) = credentials_chain.provide_credentials().await {
-                    return Err(ApiClientError::Credentials(err));
-                };
-
-                sigv4_streaming_client = Some(QDeveloperStreamingClient::from_conf(
-                    amzn_qdeveloper_streaming_client::config::Builder::from(
-                        &aws_config::defaults(behavior_version())
-                            .region(endpoint.region.clone())
-                            .credentials_provider(credentials_chain)
-                            .timeout_config(timeout_config(database))
-                            .retry_config(retry_config())
-                            .load()
-                            .await,
-                    )
-                    .http_client(crate::aws_common::http_client::client())
-                    .interceptor(OptOutInterceptor::new(database))
-                    .interceptor(UserAgentOverrideInterceptor::new())
-                    .interceptor(DelayTrackingInterceptor::new())
-                    .app_name(app_name())
-                    .endpoint_url(endpoint.url())
-                    .retry_classifier(retry_classifier::QCliRetryClassifier::new())
-                    .stalled_stream_protection(stalled_stream_protection_config())
-                    .build(),
-                ));
-            },
-            false => {
-                streaming_client = Some(CodewhispererStreamingClient::from_conf(
-                    amzn_codewhisperer_streaming_client::config::Builder::from(&bearer_sdk_config)
-                        .http_client(crate::aws_common::http_client::client())
-                        .interceptor(OptOutInterceptor::new(database))
-                        .interceptor(UserAgentOverrideInterceptor::new())
-                        .interceptor(DelayTrackingInterceptor::new())
-                        .bearer_token_resolver(BearerResolver)
-                        .app_name(app_name())
-                        .endpoint_url(endpoint.url())
-                        .retry_classifier(retry_classifier::QCliRetryClassifier::new())
-                        .stalled_stream_protection(stalled_stream_protection_config())
-                        .build(),
-                ));
-            },
-        }
-
-        // Check if using custom endpoint
-        let use_profile = !Self::is_custom_endpoint(database);
-        let profile = if use_profile {
-            match database.get_auth_profile() {
-                Ok(profile) => profile,
-                Err(err) => {
-                    error!("Failed to get auth profile: {err}");
-                    None
-                },
-            }
-        } else {
-            debug!("Custom endpoint detected, skipping profile ARN");
-            None
-        };
-
         Ok(Self {
+            bedrock_client,
             client,
-            streaming_client,
-            sigv4_streaming_client,
             mock_client: None,
-            profile,
-            model_cache: Arc::new(RwLock::new(None)),
+            profile: None,
         })
     }
 
@@ -274,6 +208,7 @@ impl ApiClient {
         Ok(profiles)
     }
 
+    // Legacy function - no longer used with Bedrock
     pub async fn list_available_models(&self) -> Result<ModelListResult, ApiClientError> {
         if cfg!(test) {
             let m = Model::builder()
@@ -287,82 +222,27 @@ impl ApiClient {
                 default_model: m,
             });
         }
-
-        let mut models = Vec::new();
-        let mut default_model = None;
-        let request = self
-            .client
-            .list_available_models()
-            .set_origin(Some(Cli))
-            .set_profile_arn(self.profile.as_ref().map(|p| p.arn.clone()));
-        let mut paginator = request.into_paginator().send();
-
-        while let Some(result) = paginator.next().await {
-            let models_output = result?;
-            models.extend(models_output.models().iter().cloned());
-
-            if default_model.is_none() {
-                default_model = Some(models_output.default_model().clone());
-            }
-        }
-        let default_model = default_model.ok_or_else(|| ApiClientError::DefaultModelNotFound)?;
-        Ok(ModelListResult { models, default_model })
+        Err(ApiClientError::DefaultModelNotFound)
     }
 
+    // Legacy function - no longer used with Bedrock
     pub async fn list_available_models_cached(&self) -> Result<ModelListResult, ApiClientError> {
-        {
-            let cache = self.model_cache.read().await;
-            if let Some(cached) = cache.as_ref() {
-                tracing::debug!("Returning cached model list");
-                return Ok(cached.clone());
-            }
-        }
-
-        tracing::debug!("Cache miss, fetching models from list_available_models API");
-        let result = self.list_available_models().await?;
-        {
-            let mut cache = self.model_cache.write().await;
-            *cache = Some(result.clone());
-        }
-        Ok(result)
+        self.list_available_models().await
     }
 
+    // Legacy function - no longer used with Bedrock
     pub async fn invalidate_model_cache(&self) {
-        let mut cache = self.model_cache.write().await;
-        *cache = None;
-        tracing::info!("Model cache invalidated");
+        // No-op
     }
 
+    // Legacy function - no longer used with Bedrock
     pub async fn get_available_models(&self, _region: &str) -> Result<ModelListResult, ApiClientError> {
-        let res = self.list_available_models_cached().await?;
-        // TODO: Once we have access to gpt-oss, add back.
-        // if region == "us-east-1" {
-        //     let gpt_oss = Model::builder()
-        //         .model_id("OPENAI_GPT_OSS_120B_1_0")
-        //         .model_name("openai-gpt-oss-120b-preview")
-        //         .token_limits(TokenLimits::builder().max_input_tokens(128_000).build())
-        //         .build()
-        //         .map_err(ApiClientError::from)?;
-
-        //     models.push(gpt_oss);
-        // }
-
-        Ok(res)
+        self.list_available_models().await
     }
 
     pub async fn is_mcp_enabled(&self) -> Result<bool, ApiClientError> {
-        let request = self
-            .client
-            .get_profile()
-            .set_profile_arn(self.profile.as_ref().map(|p| p.arn.clone()));
-
-        let response = request.send().await?;
-        let mcp_enabled = response
-            .profile()
-            .opt_in_features()
-            .and_then(|features| features.mcp_configuration())
-            .is_none_or(|config| matches!(config.toggle(), OptInFeatureToggle::On));
-        Ok(mcp_enabled)
+        // MCP is always enabled in Bedrock mode
+        Ok(true)
     }
 
     pub async fn create_subscription_token(&self) -> Result<CreateSubscriptionTokenOutput, ApiClientError> {
@@ -393,101 +273,91 @@ impl ApiClient {
             history,
         } = conversation;
 
-        let model_id_opt: Option<String> = user_input_message.model_id.clone();
+        let model_id = user_input_message.model_id.clone()
+            .unwrap_or_else(|| crate::cli::chat::cli::model::get_default_model().model_id);
 
-        if let Some(client) = &self.streaming_client {
-            let conversation_state = amzn_codewhisperer_streaming_client::types::ConversationState::builder()
-                .set_conversation_id(conversation_id)
-                .current_message(
-                    amzn_codewhisperer_streaming_client::types::ChatMessage::UserInputMessage(
-                        user_input_message.into(),
-                    ),
-                )
-                .chat_trigger_type(amzn_codewhisperer_streaming_client::types::ChatTriggerType::Manual)
-                .set_history(
-                    history
-                        .map(|v| v.into_iter().map(|i| i.try_into()).collect::<Result<Vec<_>, _>>())
-                        .transpose()?,
-                )
-                .build()
-                .expect("building conversation should not fail");
+        debug!("Sending message to Bedrock with model: {}", model_id);
 
-            match client
-                .generate_assistant_response()
-                .conversation_state(conversation_state)
-                .set_profile_arn(self.profile.as_ref().map(|p| p.arn.clone()))
-                .send()
-                .await
-            {
-                Ok(response) => Ok(SendMessageOutput::Codewhisperer(response)),
-                Err(err) => {
-                    let request_id = err
-                        .as_service_error()
-                        .and_then(|err| err.meta().request_id())
-                        .map(|s| s.to_string());
-                    let status_code = err.raw_response().map(|res| res.status().as_u16());
+        // Validate model ID
+        if let Err(e) = crate::cli::chat::cli::model::validate_model_id(&model_id) {
+            return Err(ConverseStreamError::new(
+                ConverseStreamErrorKind::InvalidModel,
+                None::<aws_sdk_bedrockruntime::Error>,
+            ));
+        }
 
-                    let body = err
-                        .raw_response()
-                        .and_then(|resp| resp.body().bytes())
-                        .unwrap_or_default();
-                    Err(ConverseStreamError::new(
-                        classify_error_kind(status_code, body, model_id_opt.as_deref(), &err),
-                        Some(err),
-                    )
-                    .set_request_id(request_id)
-                    .set_status_code(status_code))
-                },
-            }
-        } else if let Some(client) = &self.sigv4_streaming_client {
-            let conversation_state = amzn_qdeveloper_streaming_client::types::ConversationState::builder()
-                .set_conversation_id(conversation_id)
-                .current_message(amzn_qdeveloper_streaming_client::types::ChatMessage::UserInputMessage(
-                    user_input_message.into(),
-                ))
-                .chat_trigger_type(amzn_qdeveloper_streaming_client::types::ChatTriggerType::Manual)
-                .set_history(
-                    history
-                        .map(|v| v.into_iter().map(|i| i.try_into()).collect::<Result<Vec<_>, _>>())
-                        .transpose()?,
-                )
-                .build()
-                .expect("building conversation_state should not fail");
-
-            match client
-                .send_message()
-                .conversation_state(conversation_state)
-                .set_source(Some(Origin::from("CLI")))
-                .send()
-                .await
-            {
-                Ok(response) => Ok(SendMessageOutput::QDeveloper(response)),
-                Err(err) => {
-                    let request_id = err
-                        .as_service_error()
-                        .and_then(|err| err.meta().request_id())
-                        .map(|s| s.to_string());
-                    let status_code = err.raw_response().map(|res| res.status().as_u16());
-
-                    let body = err
-                        .raw_response()
-                        .and_then(|resp| resp.body().bytes())
-                        .unwrap_or_default();
-                    Err(ConverseStreamError::new(
-                        classify_error_kind(status_code, body, model_id_opt.as_deref(), &err),
-                        Some(err),
-                    )
-                    .set_request_id(request_id)
-                    .set_status_code(status_code))
-                },
-            }
-        } else if let Some(client) = &self.mock_client {
+        // Handle mock client for testing
+        if let Some(client) = &self.mock_client {
             let mut new_events = client.lock().next().unwrap_or_default().clone();
             new_events.reverse();
-
             return Ok(SendMessageOutput::Mock(new_events));
-        } else {
-            unreachable!("One of the clients must be created by this point");
+        }
+
+        // Convert to Bedrock format
+        let messages = bedrock::convert_to_bedrock_messages(&user_input_message, history.as_ref())
+            .map_err(|e| {
+                debug!("Failed to convert messages: {}", e);
+                ConverseStreamError::new(
+                    ConverseStreamErrorKind::MessageConversion,
+                    None::<aws_sdk_bedrockruntime::Error>,
+                )
+            })?;
+
+        debug!("Converted {} messages for Bedrock", messages.len());
+
+        // Disable tools - not properly implemented for Bedrock yet
+        // let tools = bedrock::convert_tools_to_bedrock(
+        //     user_input_message.user_input_message_context.as_ref()
+        //         .and_then(|ctx| ctx.tools.as_ref())
+        // );
+
+        let system_prompt = bedrock::extract_system_prompt(
+            user_input_message.user_input_message_context.as_ref()
+        );
+
+        // Call Bedrock Converse Stream API
+        debug!("Calling Bedrock converse_stream API");
+        let mut request = self.bedrock_client
+            .converse_stream()
+            .model_id(model_id.clone())
+            .set_messages(Some(messages));
+
+        // Don't pass tools - not properly implemented yet
+        // if let Some(tool_config) = tools {
+        //     request = request.tool_config(tool_config);
+        // }
+
+        if let Some(system) = system_prompt {
+            request = request.set_system(Some(system));
+        }
+
+        match request.send().await {
+            Ok(output) => {
+                debug!("Bedrock request successful, returning stream");
+                Ok(SendMessageOutput::Bedrock(output))
+            }
+            Err(err) => {
+                debug!("Bedrock request failed: {:?}", err);
+                let request_id = err.meta().request_id().map(|s| s.to_string());
+                let status_code = err.raw_response().map(|res| res.status().as_u16());
+
+                // Check for region-specific errors
+                let error_kind = if let Some(code) = status_code {
+                    if code == 404 {
+                        let region = std::env::var("AWS_REGION").unwrap_or_else(|_| "unknown".to_string());
+                        tracing::error!("Model {} may not be available in region {}", model_id, region);
+                        ConverseStreamErrorKind::ModelNotAvailable
+                    } else {
+                        ConverseStreamErrorKind::ApiError
+                    }
+                } else {
+                    ConverseStreamErrorKind::ApiError
+                };
+
+                Err(ConverseStreamError::new(error_kind, Some(err))
+                    .set_request_id(request_id)
+                    .set_status_code(status_code))
+            }
         }
     }
 

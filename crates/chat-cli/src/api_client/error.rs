@@ -19,7 +19,6 @@ use aws_smithy_runtime_api::http::Response;
 use aws_smithy_types::event_stream::RawMessage;
 use thiserror::Error;
 
-use crate::auth::AuthError;
 use crate::aws_common::SdkErrorDisplay;
 use crate::telemetry::ReasonCode;
 
@@ -60,9 +59,6 @@ pub enum ApiClientError {
     #[error(transparent)]
     ListAvailableProfilesError(#[from] SdkError<ListAvailableProfilesError, HttpResponse>),
 
-    #[error(transparent)]
-    AuthError(#[from] AuthError),
-
     // Credential errors
     #[error("failed to load credentials: {}", .0)]
     Credentials(CredentialsError),
@@ -91,7 +87,6 @@ impl ApiClientError {
             Self::SendTelemetryEvent(e) => sdk_status_code(e),
             Self::CreateSubscriptionToken(e) => sdk_status_code(e),
             Self::SmithyBuild(_) => None,
-            Self::AuthError(_) => None,
             Self::Credentials(_e) => None,
             Self::ListAvailableModelsError(e) => sdk_status_code(e),
             Self::DefaultModelNotFound => None,
@@ -114,7 +109,6 @@ impl ReasonCode for ApiClientError {
             Self::SendTelemetryEvent(e) => sdk_error_code(e),
             Self::CreateSubscriptionToken(e) => sdk_error_code(e),
             Self::SmithyBuild(_) => "SmithyBuildError".to_string(),
-            Self::AuthError(_) => "AuthError".to_string(),
             Self::Credentials(_) => "CredentialsError".to_string(),
             Self::ListAvailableModelsError(e) => sdk_error_code(e),
             Self::DefaultModelNotFound => "DefaultModelNotFound".to_string(),
@@ -162,6 +156,10 @@ impl ReasonCode for ConverseStreamError {
             ConverseStreamErrorKind::MonthlyLimitReached => "MonthlyLimitReached".to_string(),
             ConverseStreamErrorKind::ContextWindowOverflow => "ContextWindowOverflow".to_string(),
             ConverseStreamErrorKind::ModelOverloadedError => "ModelOverloadedError".to_string(),
+            ConverseStreamErrorKind::InvalidModel => "InvalidModel".to_string(),
+            ConverseStreamErrorKind::ModelNotAvailable => "ModelNotAvailable".to_string(),
+            ConverseStreamErrorKind::MessageConversion => "MessageConversion".to_string(),
+            ConverseStreamErrorKind::ApiError => "ApiError".to_string(),
             ConverseStreamErrorKind::Unknown { reason_code } => reason_code.clone(),
         }
     }
@@ -198,16 +196,29 @@ pub enum ConverseStreamErrorKind {
         "The model you've selected is temporarily unavailable. Please use '/model' to select a different model and try again."
     )]
     ModelOverloadedError,
+    #[error("This model is not supported in this deployment.")]
+    InvalidModel,
+    #[error("Model may not be enabled in your AWS region. Check Bedrock model availability.")]
+    ModelNotAvailable,
+    #[error("Failed to convert message format")]
+    MessageConversion,
+    #[error("API error occurred")]
+    ApiError,
     #[error("An unknown error occurred: {}", .reason_code)]
     Unknown { reason_code: String },
 }
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ConverseStreamSdkError {
     #[error("{}", SdkErrorDisplay(.0))]
     CodewhispererGenerateAssistantResponse(#[from] SdkError<GenerateAssistantResponseError, HttpResponse>),
     #[error("{}", SdkErrorDisplay(.0))]
     QDeveloperSendMessage(#[from] SdkError<QDeveloperSendMessageError, HttpResponse>),
+    #[error("{}", SdkErrorDisplay(.0))]
+    BedrockConverseStream(#[from] SdkError<aws_sdk_bedrockruntime::operation::converse_stream::ConverseStreamError, HttpResponse>),
+    #[error(transparent)]
+    BedrockError(#[from] aws_sdk_bedrockruntime::Error),
     #[error(transparent)]
     SmithyBuild(#[from] aws_smithy_types::error::operation::BuildError),
 }

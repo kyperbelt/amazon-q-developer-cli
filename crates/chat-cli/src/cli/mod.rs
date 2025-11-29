@@ -12,7 +12,6 @@ pub mod feed;
 mod issue;
 mod mcp;
 mod settings;
-mod user;
 
 use std::fmt::Display;
 use std::io::{
@@ -49,10 +48,6 @@ use tracing::{
 
 use crate::cli::chat::ChatArgs;
 use crate::cli::mcp::McpSubcommand;
-use crate::cli::user::{
-    LoginArgs,
-    WhoamiArgs,
-};
 use crate::logging::{
     LogArgs,
     initialize_logging,
@@ -99,14 +94,6 @@ pub enum RootSubcommand {
     Agent(AgentArgs),
     /// AI assistant in your terminal
     Chat(ChatArgs),
-    /// Log in to Amazon Q
-    Login(LoginArgs),
-    /// Log out of Amazon Q
-    Logout,
-    /// Print info about the current login session
-    Whoami(WhoamiArgs),
-    /// Show the profile associated with this idc user
-    Profile,
     /// Customize appearance & behavior
     #[command(alias("setting"))]
     Settings(settings::SettingsArgs),
@@ -133,22 +120,10 @@ impl RootSubcommand {
     ///
     /// Emitting telemetry takes a long time so the answer is usually no.
     pub fn valid_for_telemetry(&self) -> bool {
-        matches!(self, Self::Chat(_) | Self::Login(_) | Self::Profile | Self::Issue(_))
-    }
-
-    pub fn requires_auth(&self) -> bool {
-        matches!(self, Self::Chat(_) | Self::Profile)
+        matches!(self, Self::Chat(_) | Self::Issue(_))
     }
 
     pub async fn execute(self, os: &mut Os) -> Result<ExitCode> {
-        // Check for auth on subcommands that require it.
-        if self.requires_auth() && !crate::auth::is_logged_in(&mut os.database).await {
-            bail!(
-                "You are not logged in, please log in with {}",
-                StyledText::command(&format!("{CLI_BINARY_NAME} login"))
-            );
-        }
-
         // Daily heartbeat check
         if os.database.should_send_heartbeat() && os.telemetry.send_daily_heartbeat().is_ok() {
             os.database.record_heartbeat_sent().ok();
@@ -165,10 +140,6 @@ impl RootSubcommand {
         match self {
             Self::Agent(args) => args.execute(os).await,
             Self::Diagnostic(args) => args.execute(os).await,
-            Self::Login(args) => args.execute(os).await,
-            Self::Logout => user::logout(os).await,
-            Self::Whoami(args) => args.execute(os).await,
-            Self::Profile => user::profile(os).await,
             Self::Settings(settings_args) => settings_args.execute(os).await,
             Self::Issue(args) => args.execute(os).await,
             Self::Version { changelog } => Cli::print_version(changelog),
@@ -189,10 +160,6 @@ impl Display for RootSubcommand {
         let name = match self {
             Self::Agent(_) => "agent",
             Self::Chat(_) => "chat",
-            Self::Login(_) => "login",
-            Self::Logout => "logout",
-            Self::Whoami(_) => "whoami",
-            Self::Profile => "profile",
             Self::Settings(_) => "settings",
             Self::Diagnostic(_) => "diagnostic",
             Self::Issue(_) => "issue",

@@ -171,27 +171,9 @@ pub async fn get_model_info(model_id: &str, os: &Os) -> Result<ModelInfo, ChatEr
 
 /// Get available models with caching support
 pub async fn get_available_models(os: &Os) -> Result<(Vec<ModelInfo>, ModelInfo), ChatError> {
-    let endpoint = Endpoint::configured_value(&os.database);
-    let region = endpoint.region().as_ref();
-
-    match os.client.get_available_models(region).await {
-        Ok(api_res) => {
-            let models: Vec<ModelInfo> = api_res.models.iter().map(ModelInfo::from_api_model).collect();
-            let default_model = ModelInfo::from_api_model(&api_res.default_model);
-
-            tracing::debug!("Successfully fetched {} models from API", models.len());
-            Ok((models, default_model))
-        },
-        // In case of API throttling or other errors, fall back to hardcoded models
-        Err(e) => {
-            tracing::error!("Failed to fetch models from API: {}, using fallback list", e);
-
-            let models = get_fallback_models();
-            let default_model = models[0].clone();
-
-            Ok((models, default_model))
-        },
-    }
+    let models = get_builtin_models();
+    let default_model = get_default_model();
+    Ok((models, default_model))
 }
 
 /// Returns the context window length in tokens for the given model_id.
@@ -201,24 +183,63 @@ pub fn context_window_tokens(model_info: Option<&ModelInfo>) -> usize {
 }
 
 fn default_context_window() -> usize {
-    200_000
+    128_000
 }
 
-fn get_fallback_models() -> Vec<ModelInfo> {
+/// Returns the hardcoded list of allowed Bedrock models
+fn get_builtin_models() -> Vec<ModelInfo> {
     vec![
         ModelInfo {
-            model_name: Some("claude-sonnet-4".to_string()),
-            model_id: "claude-sonnet-4".to_string(),
-            description: None,
+            model_id: "openai.gpt-oss-120b-1:0".to_string(),
+            model_name: Some("ChatGPT 120B".to_string()),
+            description: Some("OpenAI GPT 120B model".to_string()),
+            context_window_tokens: 128_000,
+        },
+        ModelInfo {
+            model_id: "openai.gpt-oss-20b-1:0".to_string(),
+            model_name: Some("ChatGPT 20B".to_string()),
+            description: Some("OpenAI GPT 20B model".to_string()),
+            context_window_tokens: 128_000,
+        },
+        ModelInfo {
+            model_id: "us.anthropic.claude-haiku-4-5-20251001-v1:0".to_string(),
+            model_name: Some("Claude Haiku 4.5".to_string()),
+            description: Some("Anthropic Claude Haiku 4.5".to_string()),
             context_window_tokens: 200_000,
         },
         ModelInfo {
-            model_name: Some("claude-3.7-sonnet".to_string()),
-            model_id: "claude-3.7-sonnet".to_string(),
-            description: None,
-            context_window_tokens: 200_000,
+            model_id: "qwen.qwen3-coder-480b-a35b-v1:0".to_string(),
+            model_name: Some("Qwen3 Coder 480B".to_string()),
+            description: Some("Qwen3 Coder 480B model".to_string()),
+            context_window_tokens: 130_000,
+        },
+        ModelInfo {
+            model_id: "meta.llama4-maverick-17b-instruct-v1:0".to_string(),
+            model_name: Some("Llama 4 Maverick 17B".to_string()),
+            description: Some("Meta Llama 4 Maverick 17B".to_string()),
+            context_window_tokens: 1_000_000,
+        },
+        ModelInfo {
+            model_id: "deepseek.v3-v1:0".to_string(),
+            model_name: Some("DeepSeek V3".to_string()),
+            description: Some("DeepSeek V3 model".to_string()),
+            context_window_tokens: 163_000,
         },
     ]
+}
+
+/// Returns the default model (ChatGPT 120B)
+pub fn get_default_model() -> ModelInfo {
+    get_builtin_models()[0].clone()
+}
+
+/// Validates that a model ID is in the allowlist
+pub fn validate_model_id(model_id: &str) -> eyre::Result<()> {
+    if get_builtin_models().iter().any(|m| m.model_id == model_id) {
+        Ok(())
+    } else {
+        eyre::bail!("This model is not supported in this deployment.")
+    }
 }
 
 pub fn normalize_model_name(name: &str) -> &str {

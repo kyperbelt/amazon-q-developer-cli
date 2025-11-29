@@ -181,6 +181,10 @@ impl RtsModel {
                     ConverseStreamErrorKind::MonthlyLimitReached => StreamErrorKind::Other(err.to_string()),
                     ConverseStreamErrorKind::ContextWindowOverflow => StreamErrorKind::ContextWindowOverflow,
                     ConverseStreamErrorKind::ModelOverloadedError => StreamErrorKind::Throttling,
+                    ConverseStreamErrorKind::InvalidModel => StreamErrorKind::Other(err.to_string()),
+                    ConverseStreamErrorKind::ModelNotAvailable => StreamErrorKind::Other(err.to_string()),
+                    ConverseStreamErrorKind::MessageConversion => StreamErrorKind::Other(err.to_string()),
+                    ConverseStreamErrorKind::ApiError => StreamErrorKind::Other(err.to_string()),
                     ConverseStreamErrorKind::Unknown { .. } => StreamErrorKind::Other(err.to_string()),
                 };
                 let request_id = err.request_id.clone();

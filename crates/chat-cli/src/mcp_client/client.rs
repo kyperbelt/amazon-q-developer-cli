@@ -143,8 +143,6 @@ pub enum McpClientError {
     OauthUtil(#[from] OauthUtilError),
     #[error(transparent)]
     Parse(#[from] url::ParseError),
-    #[error(transparent)]
-    Auth(#[from] crate::auth::AuthError),
     #[error("{0}")]
     MalformedConfig(&'static str),
     #[error(transparent)]
